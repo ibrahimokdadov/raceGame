@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Car Racing Game</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="game-container">
+        <div id="threejs-container"></div>
+        <div id="score">Distance: 0</div>
+        <div id="speedometer">Speed: 0 km/h</div>
+        <div id="wallet">
+            Money: $<span id="money-display">0</span>
+        </div>
+        <div id="gameOver" style="display: none;">
+            Game Over!<br>
+            <button id="restartButton">Restart</button>
+        </div>
+        <div id="steering-wheel-container">
+            <img id="steering-wheel" src="assets/images/steering_wheel.svg" alt="Steering Wheel">
+        </div>
+    </div>
+    <script type="module" src="script.js"></script>
+</body>
+</html>
