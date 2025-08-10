@@ -41,7 +41,7 @@ let lastCoinSpawnTime = 0;
 
 let lightPoles = [];
 
-let sideObjects = [];
+
 
 let trees = [];
 let mountains = [];
@@ -99,9 +99,7 @@ function init() {
 
     createLaneMarkings();
 
-    const carGeometry = new THREE.BoxGeometry(1, 1, 2);
-    const carMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-    playerCar = new THREE.Mesh(carGeometry, carMaterial);
+    playerCar = createPlayerCarMesh();
     playerCar.position.set(0, 0.25, 5);
     scene.add(playerCar);
 
@@ -115,11 +113,7 @@ function init() {
         createLightPole(7, -40 + (i * 20));
     }
 
-    // Add side objects
-    for (let i = 0; i < 10; i++) {
-        createSideObject(-15, -40 + (i * 20)); // Left side
-        createSideObject(15, -40 + (i * 20));  // Right side
-    }
+    
 
     // Add trees
     for (let i = 0; i < 10; i++) {
@@ -205,12 +199,10 @@ function createLaneMarkings() {
 }
 
 function createObstacle() {
-    const obstacleGeometry = new THREE.BoxGeometry(OBSTACLE_WIDTH, OBSTACLE_HEIGHT, OBSTACLE_DEPTH);
-    const obstacleMaterial = new THREE.MeshStandardMaterial({ color: Math.random() * 0xffffff });
-    const obstacle = new THREE.Mesh(obstacleGeometry, obstacleMaterial);
+    const obstacle = createRandomCarShape(); // Use the new function
 
     const laneIndex = Math.floor(Math.random() * LANE_POSITIONS.length);
-    obstacle.position.set(LANE_POSITIONS[laneIndex], OBSTACLE_HEIGHT / 2, -50); // Start far back
+    obstacle.position.set(LANE_POSITIONS[laneIndex], 0, -50); // Start far back, Y position adjusted for car shapes
     scene.add(obstacle);
     obstacles.push(obstacle);
 }
@@ -250,31 +242,7 @@ function createLightPole(x, z) {
     lightPoles.push(poleGroup);
 }
 
-function createSideObject(x, z) {
-    const houseGroup = new THREE.Group();
 
-    // House body (random size for variety)
-    const bodyWidth = 2 + Math.random() * 2;
-    const bodyHeight = 3 + Math.random() * 3;
-    const bodyDepth = 2 + Math.random() * 2;
-    const bodyGeometry = new THREE.BoxGeometry(bodyWidth, bodyHeight, bodyDepth);
-    const bodyMaterial = new THREE.MeshStandardMaterial({ color: Math.random() * 0xffffff }); // Random color for body
-    const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-    body.position.set(x, bodyHeight / 2, z);
-    houseGroup.add(body);
-
-    // Roof (cone for simplicity, positioned on top of the body)
-    const roofRadius = bodyWidth / 1.5;
-    const roofHeight = bodyWidth / 1.5;
-    const roofGeometry = new THREE.ConeGeometry(roofRadius, roofHeight, 4); // 4 segments for a pyramid-like roof
-    const roofMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 }); // Brown for roof
-    const roof = new THREE.Mesh(roofGeometry, roofMaterial);
-    roof.position.set(x, bodyHeight + roofHeight / 2, z);
-    houseGroup.add(roof);
-
-    scene.add(houseGroup);
-    sideObjects.push(houseGroup);
-}
 
 function createTree(x, z) {
     const treeGroup = new THREE.Group();
@@ -311,6 +279,146 @@ function createMountain(x, z) {
     mountains.push(mountainGroup);
 }
 
+function createPlayerCarMesh() {
+    const carGroup = new THREE.Group();
+
+    // Car body
+    const bodyGeometry = new THREE.BoxGeometry(1.5, 0.5, 3);
+    const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0x0000ff }); // Blue
+    const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+    body.position.set(0, 0.25, 0); // Centered
+    carGroup.add(body);
+
+    // Car cabin/roof
+    const cabinGeometry = new THREE.BoxGeometry(1.2, 0.6, 1.5);
+    const cabinMaterial = new THREE.MeshStandardMaterial({ color: 0x000080 }); // Darker blue
+    const cabin = new THREE.Mesh(cabinGeometry, cabinMaterial);
+    cabin.position.set(0, 0.7, -0.2); // On top of body, slightly back
+    carGroup.add(cabin);
+
+    // Wheels (4 cylinders)
+    const wheelGeometry = new THREE.CylinderGeometry(0.3, 0.3, 0.2, 16);
+    const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 }); // Dark gray
+
+    const wheelPositions = [
+        { x: -0.8, y: 0.1, z: 1.0 },  // Front left
+        { x: 0.8, y: 0.1, z: 1.0 },   // Front right
+        { x: -0.8, y: 0.1, z: -1.0 }, // Rear left
+        { x: 0.8, y: 0.1, z: -1.0 }    // Rear right
+    ];
+
+    wheelPositions.forEach(pos => {
+        const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+        wheel.position.set(pos.x, pos.y, pos.z);
+        wheel.rotation.z = Math.PI / 2; // Rotate to be horizontal
+        carGroup.add(wheel);
+    });
+
+    return carGroup;
+}
+
+function createRandomCarShape() {
+    const carType = Math.floor(Math.random() * 5); // 0: SUV, 1: Mini, 2: Sports, 3: Truck, 4: Bus
+    const carGroup = new THREE.Group();
+    const bodyColor = new THREE.Color(Math.random() * 0xffffff); // Random color for each car
+
+    // Common wheel properties
+    const wheelGeometry = new THREE.CylinderGeometry(0.3, 0.3, 0.2, 16);
+    const wheelMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+
+    switch (carType) {
+        case 0: // SUV
+            // Body
+            const suvBody = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.8, 3.5), new THREE.MeshStandardMaterial({ color: bodyColor }));
+            suvBody.position.set(0, 0.4, 0);
+            carGroup.add(suvBody);
+            // Wheels
+            [-0.9, 0.9].forEach(x => {
+                [1.2, -1.2].forEach(z => {
+                    const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+                    wheel.position.set(x, 0.2, z);
+                    wheel.rotation.z = Math.PI / 2;
+                    carGroup.add(wheel);
+                });
+            });
+            break;
+        case 1: // Mini Car
+            // Body
+            const miniBody = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.6, 2.0), new THREE.MeshStandardMaterial({ color: bodyColor }));
+            miniBody.position.set(0, 0.3, 0);
+            carGroup.add(miniBody);
+            // Cabin
+            const miniCabin = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.5, 1.0), new THREE.MeshStandardMaterial({ color: bodyColor.darken(0.2) }));
+            miniCabin.position.set(0, 0.7, -0.2);
+            carGroup.add(miniCabin);
+            // Wheels
+            [-0.6, 0.6].forEach(x => {
+                [0.7, -0.7].forEach(z => {
+                    const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+                    wheel.position.set(x, 0.15, z);
+                    wheel.rotation.z = Math.PI / 2;
+                    carGroup.add(wheel);
+                });
+            });
+            break;
+        case 2: // Sports Car
+            // Body (low and sleek)
+            const sportsBody = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.4, 3.0), new THREE.MeshStandardMaterial({ color: bodyColor }));
+            sportsBody.position.set(0, 0.2, 0);
+            carGroup.add(sportsBody);
+            // Cabin (very low)
+            const sportsCabin = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.3, 1.0), new THREE.MeshStandardMaterial({ color: bodyColor.darken(0.2) }));
+            sportsCabin.position.set(0, 0.45, -0.5);
+            carGroup.add(sportsCabin);
+            // Wheels
+            [-0.7, 0.7].forEach(x => {
+                [1.0, -1.0].forEach(z => {
+                    const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+                    wheel.position.set(x, 0.1, z);
+                    wheel.rotation.z = Math.PI / 2;
+                    carGroup.add(wheel);
+                });
+            });
+            break;
+        case 3: // Truck
+            // Cabin
+            const truckCabin = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.0, 1.5), new THREE.MeshStandardMaterial({ color: bodyColor }));
+            truckCabin.position.set(0, 0.5, 1.0);
+            carGroup.add(truckCabin);
+            // Bed
+            const truckBed = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.5, 2.5), new THREE.MeshStandardMaterial({ color: bodyColor.darken(0.2) }));
+            truckBed.position.set(0, 0.25, -0.75);
+            carGroup.add(truckBed);
+            // Wheels
+            [-0.8, 0.8].forEach(x => {
+                [1.5, -0.5, -1.5].forEach(z => { // 6 wheels for a truck
+                    const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+                    wheel.position.set(x, 0.2, z);
+                    wheel.rotation.z = Math.PI / 2;
+                    carGroup.add(wheel);
+                });
+            });
+            break;
+        case 4: // Bus
+            // Body
+            const busBody = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.5, 5.0), new THREE.MeshStandardMaterial({ color: bodyColor }));
+            busBody.position.set(0, 0.75, 0);
+            carGroup.add(busBody);
+            // Wheels
+            [-0.9, 0.9].forEach(x => {
+                [2.0, 0.0, -2.0].forEach(z => { // 6 wheels for a bus
+                    const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial);
+                    wheel.position.set(x, 0.2, z);
+                    wheel.rotation.z = Math.PI / 2;
+                    carGroup.add(wheel);
+                });
+            });
+            break;
+    }
+
+    return carGroup;
+}
+
 function gameOver() {
     gameRunning = false;
     gameOverDisplay.style.display = 'block';
@@ -335,9 +443,7 @@ function restartGame() {
     lightPoles.forEach(poleGroup => scene.remove(poleGroup));
     lightPoles = [];
 
-    // Clear existing side objects
-    sideObjects.forEach(sideObject => scene.remove(sideObject));
-    sideObjects = [];
+    
 
     // Clear existing trees
     trees.forEach(treeGroup => scene.remove(treeGroup));
@@ -358,11 +464,7 @@ function restartGame() {
         createLightPole(7, -40 + (i * 20));
     }
 
-    // Re-add side objects
-    for (let i = 0; i < 10; i++) {
-        createSideObject(-15, -40 + (i * 20)); // Left side
-        createSideObject(15, -40 + (i * 20));  // Right side
-    }
+    
 
     // Re-add trees
     for (let i = 0; i < 10; i++) {
@@ -415,13 +517,7 @@ function animate() {
         }
     });
 
-    // Move side objects
-    sideObjects.forEach(sideObject => {
-        sideObject.position.z += currentRoadSpeed;
-        if (sideObject.position.z > 10) {
-            sideObject.position.z -= 100; // Move back to the start
-        }
-    });
+    
 
     // Move trees
     trees.forEach(treeGroup => {
