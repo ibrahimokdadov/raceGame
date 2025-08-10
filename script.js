@@ -18,7 +18,7 @@ let laneMarkings = [];
 let gameRunning = false;
 let currentRoadSpeed = 0.1;
 const BASE_ROAD_SPEED = 0.1;
-const MAX_ROAD_SPEED = 0.5;
+let maxRoadSpeed = 0.5;
 const ACCELERATION_RATE = 0.005;
 const DECELERATION_RATE = 0.01;
 
@@ -38,6 +38,13 @@ let currentSteeringAngle = 0;
 
 let lastObstacleSpawnTime = 0;
 let lastCoinSpawnTime = 0;
+
+let lightPoles = [];
+
+let sideObjects = [];
+
+let trees = [];
+let mountains = [];
 
 function init() {
     steeringWheel = document.getElementById('steering-wheel');
@@ -108,6 +115,24 @@ function init() {
         createLightPole(7, -40 + (i * 20));
     }
 
+    // Add side objects
+    for (let i = 0; i < 10; i++) {
+        createSideObject(-15, -40 + (i * 20)); // Left side
+        createSideObject(15, -40 + (i * 20));  // Right side
+    }
+
+    // Add trees
+    for (let i = 0; i < 10; i++) {
+        createTree(-25, -40 + (i * 20)); // Left side, further out
+        createTree(25, -40 + (i * 20));  // Right side, further out
+    }
+
+    // Add mountains
+    for (let i = 0; i < 5; i++) { // Fewer mountains, they are larger
+        createMountain(-50, -80 + (i * 40)); // Left side, even further out
+        createMountain(50, -80 + (i * 40));  // Right side, even further out
+    }
+
     restartGame();
 }
 
@@ -122,7 +147,7 @@ function onKeyDown(event) {
 
     switch (event.key) {
         case 'ArrowUp':
-            currentRoadSpeed = Math.min(MAX_ROAD_SPEED, currentRoadSpeed + ACCELERATION_RATE);
+            currentRoadSpeed = Math.min(maxRoadSpeed, currentRoadSpeed + ACCELERATION_RATE);
             break;
         case 'ArrowDown':
             currentRoadSpeed = Math.max(0, currentRoadSpeed - DECELERATION_RATE);
@@ -203,21 +228,87 @@ function createCoin() {
 }
 
 function createLightPole(x, z) {
+    const poleGroup = new THREE.Group();
+
     const poleGeometry = new THREE.CylinderGeometry(0.1, 0.1, 5, 8);
     const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x888888 });
     const pole = new THREE.Mesh(poleGeometry, poleMaterial);
     pole.position.set(x, 2.5, z);
-    scene.add(pole);
+    poleGroup.add(pole);
 
     const lightBulbGeometry = new THREE.SphereGeometry(0.3, 16, 16);
     const lightBulbMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
     const lightBulb = new THREE.Mesh(lightBulbGeometry, lightBulbMaterial);
     lightBulb.position.set(x, 5, z);
-    scene.add(lightBulb);
+    poleGroup.add(lightBulb);
 
     const pointLight = new THREE.PointLight(0xffffff, 0.5, 50);
     pointLight.position.set(x, 5, z);
-    scene.add(pointLight);
+    poleGroup.add(pointLight);
+
+    scene.add(poleGroup);
+    lightPoles.push(poleGroup);
+}
+
+function createSideObject(x, z) {
+    const houseGroup = new THREE.Group();
+
+    // House body (random size for variety)
+    const bodyWidth = 2 + Math.random() * 2;
+    const bodyHeight = 3 + Math.random() * 3;
+    const bodyDepth = 2 + Math.random() * 2;
+    const bodyGeometry = new THREE.BoxGeometry(bodyWidth, bodyHeight, bodyDepth);
+    const bodyMaterial = new THREE.MeshStandardMaterial({ color: Math.random() * 0xffffff }); // Random color for body
+    const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+    body.position.set(x, bodyHeight / 2, z);
+    houseGroup.add(body);
+
+    // Roof (cone for simplicity, positioned on top of the body)
+    const roofRadius = bodyWidth / 1.5;
+    const roofHeight = bodyWidth / 1.5;
+    const roofGeometry = new THREE.ConeGeometry(roofRadius, roofHeight, 4); // 4 segments for a pyramid-like roof
+    const roofMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 }); // Brown for roof
+    const roof = new THREE.Mesh(roofGeometry, roofMaterial);
+    roof.position.set(x, bodyHeight + roofHeight / 2, z);
+    houseGroup.add(roof);
+
+    scene.add(houseGroup);
+    sideObjects.push(houseGroup);
+}
+
+function createTree(x, z) {
+    const treeGroup = new THREE.Group();
+
+    // Trunk
+    const trunkGeometry = new THREE.BoxGeometry(0.5, 3, 0.5);
+    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 }); // Brown
+    const trunk = new THREE.Mesh(trunkGeometry, trunkMaterial);
+    trunk.position.set(x, 1.5, z); // Half height
+    treeGroup.add(trunk);
+
+    // Foliage
+    const foliageGeometry = new THREE.ConeGeometry(1.5, 3, 8); // Radius, height, segments
+    const foliageMaterial = new THREE.MeshStandardMaterial({ color: 0x228B22 }); // Forest Green
+    const foliage = new THREE.Mesh(foliageGeometry, foliageMaterial);
+    foliage.position.set(x, 4.5, z); // Above trunk
+    treeGroup.add(foliage);
+
+    scene.add(treeGroup);
+    trees.push(treeGroup);
+}
+
+function createMountain(x, z) {
+    const mountainGroup = new THREE.Group();
+
+    // Mountain shape (simple cone)
+    const mountainGeometry = new THREE.ConeGeometry(10, 30, 8); // Radius, height, segments
+    const mountainMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 }); // Gray
+    const mountain = new THREE.Mesh(mountainGeometry, mountainMaterial);
+    mountain.position.set(x, 15, z); // Half height
+    mountainGroup.add(mountain);
+
+    scene.add(mountainGroup);
+    mountains.push(mountainGroup);
 }
 
 function gameOver() {
@@ -240,15 +331,56 @@ function restartGame() {
     coins.forEach(coin => scene.remove(coin));
     coins = [];
 
+    // Clear existing light poles
+    lightPoles.forEach(poleGroup => scene.remove(poleGroup));
+    lightPoles = [];
+
+    // Clear existing side objects
+    sideObjects.forEach(sideObject => scene.remove(sideObject));
+    sideObjects = [];
+
+    // Clear existing trees
+    trees.forEach(treeGroup => scene.remove(treeGroup));
+    trees = [];
+
+    // Clear existing mountains
+    mountains.forEach(mountainGroup => scene.remove(mountainGroup));
+    mountains = [];
+
     // Reset lane markings
     laneMarkings.forEach(marking => scene.remove(marking));
     laneMarkings = [];
     createLaneMarkings();
 
+    // Re-add light poles
+    for (let i = 0; i < 10; i++) {
+        createLightPole(-7, -40 + (i * 20));
+        createLightPole(7, -40 + (i * 20));
+    }
+
+    // Re-add side objects
+    for (let i = 0; i < 10; i++) {
+        createSideObject(-15, -40 + (i * 20)); // Left side
+        createSideObject(15, -40 + (i * 20));  // Right side
+    }
+
+    // Re-add trees
+    for (let i = 0; i < 10; i++) {
+        createTree(-25, -40 + (i * 20)); // Left side, further out
+        createTree(25, -40 + (i * 20));  // Right side, further out
+    }
+
+    // Re-add mountains
+    for (let i = 0; i < 5; i++) { // Fewer mountains, they are larger
+        createMountain(-50, -80 + (i * 40)); // Left side, even further out
+        createMountain(50, -80 + (i * 40));  // Right side, even further out
+    }
+
     currentLane = 1;
     playerCar.position.set(LANE_POSITIONS[currentLane], 0.25, 5);
     road.position.z = -40;
     currentRoadSpeed = BASE_ROAD_SPEED;
+    maxRoadSpeed = 0.5;
     currentSteeringAngle = 0;
     updateSteeringWheel();
     gameRunning = true;
@@ -275,15 +407,58 @@ function animate() {
         }
     });
 
+    // Move light poles
+    lightPoles.forEach(poleGroup => {
+        poleGroup.position.z += currentRoadSpeed;
+        if (poleGroup.position.z > 10) {
+            poleGroup.position.z -= 100; // Move back to the start
+        }
+    });
+
+    // Move side objects
+    sideObjects.forEach(sideObject => {
+        sideObject.position.z += currentRoadSpeed;
+        if (sideObject.position.z > 10) {
+            sideObject.position.z -= 100; // Move back to the start
+        }
+    });
+
+    // Move trees
+    trees.forEach(treeGroup => {
+        treeGroup.position.z += currentRoadSpeed;
+        if (treeGroup.position.z > 10) {
+            treeGroup.position.z -= 100; // Move back to the start
+        }
+    });
+
+    // Move mountains
+    mountains.forEach(mountainGroup => {
+        mountainGroup.position.z += currentRoadSpeed;
+        if (mountainGroup.position.z > 10) {
+            mountainGroup.position.z -= 100; // Move back to the start
+        }
+    });
+
     // Update distance and speedometer
     distance += currentRoadSpeed * 10;
     scoreDisplay.textContent = `Distance: ${Math.floor(distance)}`;
     speedometerDisplay.textContent = `Speed: ${Math.floor(currentRoadSpeed * 100)} km/h`;
     moneyDisplay.textContent = currentMoney;
 
-    // Spawn obstacles
+    // Gradually increase max speed and obstacle frequency based on distance
+    maxRoadSpeed = 0.5 + (distance / 1000) * 0.05;
+
+    // Auto-accelerate currentRoadSpeed
+    currentRoadSpeed = Math.min(maxRoadSpeed, currentRoadSpeed + 0.0005);
+
     const currentTime = performance.now();
-    if (currentTime - lastObstacleSpawnTime > OBSTACLE_SPAWN_INTERVAL) {
+    const initialSpawnInterval = 2000;
+    const minSpawnInterval = 400;
+    const distanceToReachMinInterval = 60000;
+    const dynamicSpawnInterval = Math.max(minSpawnInterval, initialSpawnInterval - (initialSpawnInterval - minSpawnInterval) * (distance / distanceToReachMinInterval));
+
+    // Spawn obstacles
+    if (currentTime - lastObstacleSpawnTime > dynamicSpawnInterval && obstacles.length < 10) {
         createObstacle();
         lastObstacleSpawnTime = currentTime;
     }
