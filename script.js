@@ -7,6 +7,8 @@ const restartButton = document.getElementById('restartButton');
 const threejsContainer = document.getElementById('threejs-container');
 const moneyDisplay = document.getElementById('money-display'); // Get reference to money display
 let steeringWheel; // Declare globally, assign in init
+let fineNotificationDiv; // overlay for fines
+let fineMessageTimeout; // handle to clear previous timers
 
 let scene, camera, renderer;
 let playerCar;
@@ -21,6 +23,8 @@ const BASE_ROAD_SPEED = 0.1;
 let maxRoadSpeed = 0.5;
 const ACCELERATION_RATE = 0.005;
 const DECELERATION_RATE = 0.01;
+const HANDBRAKE_DECEL_RATE = 0.035; // stronger than normal brake for quick but not instant stop
+let isHandBraking = false;
 
 const OBSTACLE_WIDTH = 1; // Width of obstacle
 const OBSTACLE_HEIGHT = 1; // Height of obstacle
@@ -38,6 +42,13 @@ let currentSteeringAngle = 0;
 
 let lastObstacleSpawnTime = 0;
 let lastCoinSpawnTime = 0;
+
+let trafficLights = [];
+// Prefer distance-based spawning so braking doesn't pile lights close by
+const TRAFFIC_LIGHT_SPAWN_DISTANCE = 180; // spawn every 180 distance units
+let lastTrafficLightSpawnDistance = 0;
+const MAX_TRAFFIC_LIGHTS = 6;
+const MIN_TRAFFIC_LIGHT_GAP_Z = 140; // ensure very wide spacing between lights
 
 let lightPoles = [];
 
@@ -68,6 +79,27 @@ function init() {
     renderer.shadowMap.enabled = true; // Enable shadow maps
     renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Soft shadows
     threejsContainer.appendChild(renderer.domElement);
+
+    // Fine notification overlay
+    fineNotificationDiv = document.createElement('div');
+    fineNotificationDiv.style.position = 'fixed';
+    fineNotificationDiv.style.top = '15%';
+    fineNotificationDiv.style.left = '50%';
+    fineNotificationDiv.style.transform = 'translate(-50%, -50%) scale(1)';
+    fineNotificationDiv.style.padding = '12px 18px';
+    fineNotificationDiv.style.borderRadius = '8px';
+    fineNotificationDiv.style.background = 'rgba(0,0,0,0.6)';
+    fineNotificationDiv.style.color = '#ff4444';
+    fineNotificationDiv.style.fontFamily = 'Arial, Helvetica, sans-serif';
+    fineNotificationDiv.style.fontSize = '56px';
+    fineNotificationDiv.style.fontWeight = '800';
+    fineNotificationDiv.style.letterSpacing = '1px';
+    fineNotificationDiv.style.textShadow = '0 2px 6px rgba(0,0,0,0.8)';
+    fineNotificationDiv.style.zIndex = '10000';
+    fineNotificationDiv.style.opacity = '0';
+    fineNotificationDiv.style.pointerEvents = 'none';
+    fineNotificationDiv.style.transition = 'opacity 200ms ease, transform 200ms ease';
+    document.body.appendChild(fineNotificationDiv);
 
     const hemisphereLight = new THREE.HemisphereLight(0xb1e1ff, 0xb97a20, 0.5); // Sky color, ground color, intensity
     scene.add(hemisphereLight);
@@ -146,6 +178,9 @@ function onKeyDown(event) {
         case 'ArrowDown':
             currentRoadSpeed = Math.max(0, currentRoadSpeed - DECELERATION_RATE);
             break;
+        case ' ': // Spacebar for handbrake
+            isHandBraking = true;
+            break;
         case 'ArrowLeft':
             if (currentLane > 0) {
                 currentLane--;
@@ -167,6 +202,9 @@ function onKeyDown(event) {
 function onKeyUp(event) {
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         currentSteeringAngle = 0;
+    }
+    if (event.key === ' ') {
+        isHandBraking = false;
     }
     updateSteeringWheel();
 }
@@ -201,8 +239,43 @@ function createLaneMarkings() {
 function createObstacle() {
     const obstacle = createRandomCarShape(); // Use the new function
 
-    const laneIndex = Math.floor(Math.random() * LANE_POSITIONS.length);
-    obstacle.position.set(LANE_POSITIONS[laneIndex], 0, -50); // Start far back, Y position adjusted for car shapes
+    // Pick a lane and ensure spacing from last obstacle in that lane
+    let laneIndex = Math.floor(Math.random() * LANE_POSITIONS.length);
+    const baseSpawnZ = -50;
+    const MIN_LANE_GAP_Z = 18; // avoid side-by-side blocks in same lane
+
+    // Try up to 3 times to find a lane with space; otherwise push farther back
+    let spawnZ = baseSpawnZ;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        const nearestAhead = obstacles
+            .filter(o => Math.abs(o.position.x - LANE_POSITIONS[laneIndex]) < 0.1)
+            .reduce((acc, o) => Math.min(acc, o.position.z), Infinity);
+        if (nearestAhead === Infinity || (nearestAhead - spawnZ) >= MIN_LANE_GAP_Z) {
+            break;
+        } else {
+            // try another lane
+            const otherLanes = [0,1,2].filter(i => i !== laneIndex);
+            laneIndex = otherLanes[Math.floor(Math.random() * otherLanes.length)];
+        }
+    }
+    // Final spacing push if still crowded
+    const sameLaneObstacles = obstacles.filter(o => Math.abs(o.position.x - LANE_POSITIONS[laneIndex]) < 0.1);
+    if (sameLaneObstacles.length) {
+        const nearestZ = sameLaneObstacles.reduce((acc, o) => Math.min(acc, o.position.z), Infinity);
+        if (isFinite(nearestZ) && (nearestZ - spawnZ) < MIN_LANE_GAP_Z) {
+            spawnZ = nearestZ - MIN_LANE_GAP_Z;
+        }
+    }
+
+    obstacle.position.set(LANE_POSITIONS[laneIndex], 0, spawnZ);
+
+    // Assign a small relative speed so some cars move faster/slower
+    const relSpeed = (Math.random() * 0.05) - 0.015; // [-0.015, 0.035]
+    obstacle.userData = {
+        laneIndex,
+        relSpeed
+    };
+
     scene.add(obstacle);
     obstacles.push(obstacle);
 }
@@ -279,6 +352,118 @@ function createMountain(x, z) {
     mountains.push(mountainGroup);
 }
 
+function createTrafficLight(x, z, fixedIsRed) {
+    const trafficLightGroup = new THREE.Group();
+    // Position the whole group at the target Z so child meshes can use local coords
+    trafficLightGroup.position.set(0, 0, z);
+
+    // Pole
+    const poleGeometry = new THREE.CylinderGeometry(0.1, 0.1, 7, 8);
+    const poleMaterial = new THREE.MeshStandardMaterial({ color: 0x555555 });
+    const pole = new THREE.Mesh(poleGeometry, poleMaterial);
+    pole.position.set(x, 3.5, 0);
+    pole.frustumCulled = false;
+    trafficLightGroup.add(pole);
+
+    // Overhead arm from pole to center of road
+    const armLength = Math.abs(x) + 0.2; // reach to x=0
+    const armGeometry = new THREE.BoxGeometry(armLength, 0.15, 0.15);
+    const armMaterial = new THREE.MeshStandardMaterial({ color: 0x444444 });
+    const arm = new THREE.Mesh(armGeometry, armMaterial);
+    arm.position.set((x > 0 ? x - armLength / 2 : x + armLength / 2), 6.5, 0);
+    arm.frustumCulled = false;
+    trafficLightGroup.add(arm);
+
+    // Over-road housing centered at x=0 for visibility
+    const housingGeometry = new THREE.BoxGeometry(1.2, 2.2, 0.6);
+    const housingMaterial = new THREE.MeshStandardMaterial({ color: 0x222222 });
+    const housing = new THREE.Mesh(housingGeometry, housingMaterial);
+    housing.position.set(0, 6.5, 0);
+    housing.frustumCulled = false;
+    trafficLightGroup.add(housing);
+
+    // Red light
+    const redLightGeometry = new THREE.SphereGeometry(0.35, 16, 16);
+    const redLightMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000, emissive: 0x220000, emissiveIntensity: 1.0 });
+    const redLight = new THREE.Mesh(redLightGeometry, redLightMaterial);
+    redLight.position.set(0, 7.2, 0.05); // Over the lane, slightly in front
+    redLight.frustumCulled = false;
+    trafficLightGroup.add(redLight);
+    trafficLightGroup.redLight = redLight; // Store reference
+
+    // Green light
+    const greenLightGeometry = new THREE.SphereGeometry(0.35, 16, 16);
+    const greenLightMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00, emissive: 0x003300, emissiveIntensity: 1.0 });
+    const greenLight = new THREE.Mesh(greenLightGeometry, greenLightMaterial);
+    greenLight.position.set(0, 6.2, 0.05); // Over the lane, slightly in front
+    greenLight.frustumCulled = false;
+    trafficLightGroup.add(greenLight);
+    trafficLightGroup.greenLight = greenLight; // Store reference
+    // Note: Removed point light glows to avoid spawn-time stutter.
+
+    // Duplicate indicator lights on the pole so they're visible when close underneath
+    const redPoleLightGeo = new THREE.SphereGeometry(0.28, 16, 16);
+    const redPoleLightMat = new THREE.MeshStandardMaterial({ color: 0xff0000, emissive: 0x220000, emissiveIntensity: 1.0 });
+    const redPoleLight = new THREE.Mesh(redPoleLightGeo, redPoleLightMat);
+    redPoleLight.position.set(x, 3.2, 0.12); // lower on pole, slightly forward for close-up visibility
+    redPoleLight.frustumCulled = false;
+    trafficLightGroup.add(redPoleLight);
+    trafficLightGroup.redLightPole = redPoleLight;
+
+    const greenPoleLightGeo = new THREE.SphereGeometry(0.28, 16, 16);
+    const greenPoleLightMat = new THREE.MeshStandardMaterial({ color: 0x00ff00, emissive: 0x003300, emissiveIntensity: 1.0 });
+    const greenPoleLight = new THREE.Mesh(greenPoleLightGeo, greenPoleLightMat);
+    greenPoleLight.position.set(x, 2.4, 0.12); // lower on pole, slightly forward for close-up visibility
+    greenPoleLight.frustumCulled = false;
+    trafficLightGroup.add(greenPoleLight);
+    trafficLightGroup.greenLightPole = greenPoleLight;
+
+    // Stop line on the road for clarity
+    const stopLineGeometry = new THREE.PlaneGeometry(10, 0.35);
+    const stopLineMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+    const stopLine = new THREE.Mesh(stopLineGeometry, stopLineMaterial);
+    stopLine.rotation.x = -Math.PI / 2;
+    stopLine.position.set(0, 0.01, -0.2);
+    stopLine.receiveShadow = false;
+    stopLine.castShadow = false;
+    stopLine.frustumCulled = false;
+    trafficLightGroup.add(stopLine);
+    trafficLightGroup.stopLine = stopLine;
+    // Track world-space Z of the stop line for accurate crossing detection
+    trafficLightGroup.stopLinePrevWorldZ = trafficLightGroup.position.z - 0.2;
+
+    // Initial state (use provided state if given, else random)
+    trafficLightGroup.isRed = (typeof fixedIsRed === 'boolean') ? fixedIsRed : (Math.random() < 0.5);
+    trafficLightGroup.violationChecked = false; // Initialize violation flag
+    trafficLightGroup.prevZ = trafficLightGroup.position.z; // track for crossing detection
+    updateTrafficLightColor(trafficLightGroup);
+
+    // Cycling config
+    trafficLightGroup.cycleDuration = 6000; // ms for auto cycle
+    trafficLightGroup.lastSwitchTime = performance.now();
+    trafficLightGroup.waitingForGreen = false;
+    trafficLightGroup.waitingStart = 0;
+
+    trafficLightGroup.scale.set(1.5, 1.5, 1.5); // Increase scale
+    trafficLightGroup.frustumCulled = false;
+    scene.add(trafficLightGroup);
+    trafficLights.push(trafficLightGroup);
+}
+
+function updateTrafficLightColor(lightGroup) {
+    if (lightGroup.isRed) {
+        lightGroup.redLight.material.color.set(0xff0000); // Red
+        lightGroup.greenLight.material.color.set(0x003300); // Dim green
+        if (lightGroup.redLightPole) lightGroup.redLightPole.material.color.set(0xff0000);
+        if (lightGroup.greenLightPole) lightGroup.greenLightPole.material.color.set(0x003300);
+    } else {
+        lightGroup.redLight.material.color.set(0x330000); // Dim red
+        lightGroup.greenLight.material.color.set(0x00ff00); // Green
+        if (lightGroup.redLightPole) lightGroup.redLightPole.material.color.set(0x330000);
+        if (lightGroup.greenLightPole) lightGroup.greenLightPole.material.color.set(0x00ff00);
+    }
+}
+
 function createPlayerCarMesh() {
     const carGroup = new THREE.Group();
 
@@ -348,7 +533,7 @@ function createRandomCarShape() {
             miniBody.position.set(0, 0.3, 0);
             carGroup.add(miniBody);
             // Cabin
-            const miniCabin = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.5, 1.0), new THREE.MeshStandardMaterial({ color: bodyColor.darken(0.2) }));
+            const miniCabin = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.5, 1.0), new THREE.MeshStandardMaterial({ color: new THREE.Color(bodyColor.r * 0.8, bodyColor.g * 0.8, bodyColor.b * 0.8) }));
             miniCabin.position.set(0, 0.7, -0.2);
             carGroup.add(miniCabin);
             // Wheels
@@ -367,7 +552,7 @@ function createRandomCarShape() {
             sportsBody.position.set(0, 0.2, 0);
             carGroup.add(sportsBody);
             // Cabin (very low)
-            const sportsCabin = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.3, 1.0), new THREE.MeshStandardMaterial({ color: bodyColor.darken(0.2) }));
+            const sportsCabin = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.3, 1.0), new THREE.MeshStandardMaterial({ color: new THREE.Color(bodyColor.r * 0.8, bodyColor.g * 0.8, bodyColor.b * 0.8) }));
             sportsCabin.position.set(0, 0.45, -0.5);
             carGroup.add(sportsCabin);
             // Wheels
@@ -386,7 +571,7 @@ function createRandomCarShape() {
             truckCabin.position.set(0, 0.5, 1.0);
             carGroup.add(truckCabin);
             // Bed
-            const truckBed = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.5, 2.5), new THREE.MeshStandardMaterial({ color: bodyColor.darken(0.2) }));
+            const truckBed = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.5, 2.5), new THREE.MeshStandardMaterial({ color: new THREE.Color(bodyColor.r * 0.8, bodyColor.g * 0.8, bodyColor.b * 0.8) }));
             truckBed.position.set(0, 0.25, -0.75);
             carGroup.add(truckBed);
             // Wheels
@@ -453,6 +638,10 @@ function restartGame() {
     mountains.forEach(mountainGroup => scene.remove(mountainGroup));
     mountains = [];
 
+    // Clear existing traffic lights
+    trafficLights.forEach(light => scene.remove(light));
+    trafficLights = [];
+
     // Reset lane markings
     laneMarkings.forEach(marking => scene.remove(marking));
     laneMarkings = [];
@@ -495,6 +684,8 @@ function animate() {
 
     if (!gameRunning) return;
 
+    const currentTime = performance.now(); // Moved declaration
+
     // Road scrolling
     road.position.z += currentRoadSpeed;
     if (road.position.z > 10) {
@@ -535,6 +726,86 @@ function animate() {
         }
     });
 
+    // Spawn traffic lights based on distance rather than time to avoid close spawns when braking
+    // Also ensure only one light is on screen at a time
+    if ((distance - lastTrafficLightSpawnDistance) > TRAFFIC_LIGHT_SPAWN_DISTANCE) {
+        // Only consider lights within the near field as "visible" to prevent multiple on screen
+        const visibleLights = trafficLights.filter(l => l.position.z > -100);
+        if (visibleLights.length === 0 && trafficLights.length < MAX_TRAFFIC_LIGHTS) {
+            let spawnZ = -200; // spawn even farther so they appear from a distance
+            // Enforce minimum Z gap from the farthest-back existing light
+            if (trafficLights.length > 0) {
+                const farthestBackZ = Math.min(...trafficLights.map(l => l.position.z));
+                if (isFinite(farthestBackZ) && (farthestBackZ - spawnZ) < MIN_TRAFFIC_LIGHT_GAP_Z) {
+                    spawnZ = farthestBackZ - MIN_TRAFFIC_LIGHT_GAP_Z;
+                }
+            }
+            createTrafficLight(-5, spawnZ); // Single light (pole on left, housing centered)
+            lastTrafficLightSpawnDistance = distance;
+        }
+    }
+
+    // Update and check traffic lights
+    for (let i = 0; i < trafficLights.length; i++) {
+        const light = trafficLights[i];
+        const prevZ = light.prevZ !== undefined ? light.prevZ : light.position.z;
+        light.position.z += currentRoadSpeed;
+
+        // Compute stop line world Z (group Z minus 0.2 because stopLine local Z is -0.2)
+        const stopLineWorldZ = light.position.z - 0.2;
+        const prevStopLineWorldZ = (typeof light.stopLinePrevWorldZ === 'number') ? light.stopLinePrevWorldZ : (prevZ - 0.2);
+
+        const carZ = playerCar.position.z;
+        const crossedStopLine = prevStopLineWorldZ < carZ && stopLineWorldZ >= carZ;
+
+        // Apply violation strictly on geometric crossing, regardless of speed, so braking still shows fine message
+        if (!light.violationChecked && crossedStopLine) {
+            if (light.isRed) {
+                currentMoney -= 20;
+                console.log("Red light violation! -20 money. Current money: " + currentMoney);
+                showFineMessage('Red light Fine -$20');
+            }
+            // Mark checked regardless of color to avoid any later false fines
+            light.violationChecked = true;
+        }
+
+        // Simple auto-cycle to avoid being stuck forever
+        if (currentTime - (light.lastSwitchTime || 0) > (light.cycleDuration || 6000)) {
+            light.isRed = !light.isRed;
+            light.lastSwitchTime = currentTime;
+            updateTrafficLightColor(light);
+        }
+
+        // If player is stopped at the red light, turn green shortly to let them resume
+        const distAhead = stopLineWorldZ - carZ; // positive if stop line is ahead
+        const nearAndWaiting = light.isRed && distAhead > 0 && distAhead < 2.0 && currentRoadSpeed < 0.02;
+        if (nearAndWaiting) {
+            if (!light.waitingForGreen) {
+                light.waitingForGreen = true;
+                light.waitingStart = currentTime;
+            } else if (currentTime - (light.waitingStart || 0) > 1200) {
+                light.isRed = false;
+                light.lastSwitchTime = currentTime;
+                updateTrafficLightColor(light);
+                light.waitingForGreen = false;
+            }
+        } else {
+            light.waitingForGreen = false;
+        }
+
+        // update previous positions for next frame
+        light.prevZ = light.position.z;
+        light.stopLinePrevWorldZ = stopLineWorldZ;
+
+        // Remove lights shortly after the car passes them to keep only one on screen
+        const removeThreshold = playerCar.position.z + 20;
+        if (light.position.z > removeThreshold) {
+            scene.remove(light);
+            trafficLights.splice(i, 1);
+            i--;
+        }
+    }
+
     // Update distance and speedometer
     distance += currentRoadSpeed * 10;
     scoreDisplay.textContent = `Distance: ${Math.floor(distance)}`;
@@ -544,10 +815,13 @@ function animate() {
     // Gradually increase max speed and obstacle frequency based on distance
     maxRoadSpeed = 0.5 + (distance / 1000) * 0.05;
 
-    // Auto-accelerate currentRoadSpeed
-    currentRoadSpeed = Math.min(maxRoadSpeed, currentRoadSpeed + 0.0005);
+    // Update speed: handbrake decelerates strongly but smoothly; otherwise gentle auto-acceleration
+    if (isHandBraking) {
+        currentRoadSpeed = Math.max(0, currentRoadSpeed - HANDBRAKE_DECEL_RATE);
+    } else {
+        currentRoadSpeed = Math.min(maxRoadSpeed, currentRoadSpeed + 0.0005);
+    }
 
-    const currentTime = performance.now();
     const initialSpawnInterval = 2000;
     const minSpawnInterval = 400;
     const distanceToReachMinInterval = 60000;
@@ -568,7 +842,8 @@ function animate() {
     // Update and check obstacles
     for (let i = 0; i < obstacles.length; i++) {
         const obstacle = obstacles[i];
-        obstacle.position.z += currentRoadSpeed; // Move towards camera
+        const rel = (obstacle.userData && typeof obstacle.userData.relSpeed === 'number') ? obstacle.userData.relSpeed : 0;
+        obstacle.position.z += currentRoadSpeed + rel; // Per-obstacle relative speed
 
         // Collision detection (simple AABB for now)
         const playerBox = new THREE.Box3().setFromObject(playerCar);
@@ -612,6 +887,24 @@ function animate() {
     }
 
     renderer.render(scene, camera);
+}
+
+function showFineMessage(text) {
+    if (!fineNotificationDiv) return;
+    fineNotificationDiv.textContent = text;
+    // Clear previous timers if any
+    if (fineMessageTimeout) {
+        clearTimeout(fineMessageTimeout);
+        fineMessageTimeout = null;
+    }
+    // Fade in
+    fineNotificationDiv.style.opacity = '1';
+    fineNotificationDiv.style.transform = 'translate(-50%, -50%) scale(1.0)';
+    // Auto hide after 1.2s
+    fineMessageTimeout = setTimeout(() => {
+        fineNotificationDiv.style.opacity = '0';
+        fineNotificationDiv.style.transform = 'translate(-50%, -50%) scale(0.98)';
+    }, 1200);
 }
 
 init();

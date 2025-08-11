@@ -40,3 +40,13 @@ This document outlines the step-by-step plan to rebuild and enhance the 3D car r
     - Functional steering, acceleration, and deceleration.
     - Obstacles and coins spawn and are interactive.
     - UI displays score, speed, and money.
+
+### Version 0.02
+
+- **Date:** 2025-08-10
+- **Traffic Lights Improvements:**
+    - Lights now spawn farther ahead so they are clearly visible to the player.
+    - Overhead-mounted housing with brighter emissive lamps and subtle glow.
+    - White stop line added across the road beneath each traffic light for clarity.
+    - Red light fines are applied only when you actually cross the stop line while the light is red.
+    - Code changes in `script.js`: `createTrafficLight()` visuals/stop line, `animate()` spawn distance and violation detection.
